@@ -1,0 +1,57 @@
+name: Import application source
+
+on:
+  push:
+    branches: [main]
+    paths: ['Teyvat-Vocab-source.zip']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: teyvat-source-import
+  cancel-in-progress: false
+
+jobs:
+  import:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Validate and extract source archive
+        run: |
+          python - <<'PY'
+          from pathlib import Path, PurePosixPath
+          import zipfile
+
+          archive = Path('Teyvat-Vocab-source.zip')
+          if not archive.is_file():
+              raise SystemExit('Source archive is missing')
+
+          with zipfile.ZipFile(archive) as z:
+              corrupt = z.testzip()
+              if corrupt:
+                  raise SystemExit(f'Corrupt archive member: {corrupt}')
+              for info in z.infolist():
+                  path = PurePosixPath(info.filename)
+                  if path.is_absolute() or '..' in path.parts:
+                      raise SystemExit(f'Unsafe archive path: {info.filename}')
+                  if ((info.external_attr >> 16) & 0o170000) == 0o120000:
+                      raise SystemExit(f'Symlinks are not allowed: {info.filename}')
+              z.extractall(Path.cwd())
+          PY
+
+      - name: Commit imported source
+        run: |
+          rm -f Teyvat-Vocab-source.zip .github/workflows/bootstrap.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          if git diff --cached --quiet; then
+            echo "No source changes to commit"
+            exit 0
+          fi
+          git commit -m "Import Teyvat Vocab application source"
+          git push origin HEAD:main
