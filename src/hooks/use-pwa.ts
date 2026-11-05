@@ -104,27 +104,35 @@ export function useServiceWorkerStatus() {
       return;
     }
 
-    // 检查已有 registration
+    let active = false;
+    const markActive = () => {
+      active = true;
+      window.clearTimeout(timeoutId);
+      setSwStatus('active');
+      setOfflineReady(true);
+    };
+    const timeoutId = window.setTimeout(() => {
+      if (!active) setSwStatus('error');
+    }, 60000);
+
+    // ready 只有在注册成功并激活后才会 resolve；超时用于避免无限等待。
     navigator.serviceWorker.ready
       .then((reg) => {
-        if (reg.active) {
-          setSwStatus('active');
-          // 简单判断：有 active SW 即认为离线可用
-          setOfflineReady(true);
-        }
+        if (reg.active) markActive();
       })
       .catch(() => {
+        window.clearTimeout(timeoutId);
         setSwStatus('error');
       });
 
     // 监听 controllerchange（SW 接管）
     const onControllerChange = () => {
-      setSwStatus('active');
-      setOfflineReady(true);
+      markActive();
     };
     navigator.serviceWorker.addEventListener('controllerchange', onControllerChange);
 
     return () => {
+      window.clearTimeout(timeoutId);
       navigator.serviceWorker.removeEventListener('controllerchange', onControllerChange);
     };
   }, []);

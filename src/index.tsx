@@ -36,7 +36,7 @@ function registerServiceWorker() {
 
   const swUrl = resolveAppUrl('sw.js');
 
-  window.addEventListener('load', () => {
+  const register = () => {
     navigator.serviceWorker
       .register(swUrl, { scope: resolveAppUrl('./') })
       .then((registration) => {
@@ -59,7 +59,14 @@ function registerServiceWorker() {
       .catch((err) => {
         logger.error('SW: registration failed:', String(err));
       });
-  });
+  };
+
+  // React 的 effect 可能晚于 window.load；已加载时必须立即注册。
+  if (document.readyState === 'complete') {
+    register();
+  } else {
+    window.addEventListener('load', register, { once: true });
+  }
 }
 
 function AppEntry() {
