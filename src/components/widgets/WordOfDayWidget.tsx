@@ -11,18 +11,17 @@ export default function WordOfDayWidget() {
       try {
         const allIds = await getAllWordIds();
         if (!allIds.length) return;
-        // Deterministic "word of the day" based on date
         const date = new Date();
         const dayOfYear = Math.floor(
-          (date.getTime() - new Date(date.getFullYear(), 0, 0).getTime()) / 86400000
+          (date.getTime() - new Date(date.getFullYear(), 0, 0).getTime()) / 86400000,
         );
         const index = dayOfYear % allIds.length;
-        const w = await getWord(allIds[index]);
-        if (w && mounted) {
-          setWord({ word: w.word, phonetic: w.phonetic, definitionRaw: w.definitionRaw });
+        const current = await getWord(allIds[index]);
+        if (current && mounted) {
+          setWord({ word: current.word, phonetic: current.phonetic, definitionRaw: current.definitionRaw });
         }
       } catch {
-        // ignore errors in widget
+        // The widget keeps its empty state if the word cannot be loaded.
       } finally {
         if (mounted) setLoading(false);
       }
@@ -31,18 +30,18 @@ export default function WordOfDayWidget() {
   }, []);
 
   return (
-    <div className="relative h-full w-full overflow-hidden rounded-2xl bg-white/70 backdrop-blur-md border border-white/40 shadow-sm p-3 md:p-4 flex flex-col justify-center">
+    <div className="widget-surface relative flex h-full w-full flex-col justify-center overflow-hidden p-3">
       {loading ? (
-        <div className="text-sm text-muted-foreground">加载中...</div>
+        <div className="text-xs text-muted-foreground">加载中…</div>
       ) : word ? (
         <>
-          <div className="text-xs text-muted-foreground">今日一词</div>
-          <div className="mt-0.5 text-lg font-bold text-foreground truncate">{word.word}</div>
-          <div className="text-[11px] text-muted-foreground truncate">{word.phonetic}</div>
-          <div className="mt-1.5 text-[11px] text-foreground/80 line-clamp-2">{word.definitionRaw}</div>
+          <div className="text-[10px] text-muted-foreground">今日一词</div>
+          <div className="mt-0.5 truncate text-xl font-bold leading-6 text-foreground">{word.word}</div>
+          <div className="truncate text-[10px] leading-4 text-muted-foreground">{word.phonetic}</div>
+          <div className="mt-1 line-clamp-2 text-[10px] leading-4 text-foreground/80">{word.definitionRaw}</div>
         </>
       ) : (
-        <div className="text-sm text-muted-foreground">暂无</div>
+        <div className="text-xs text-muted-foreground">暂无</div>
       )}
     </div>
   );

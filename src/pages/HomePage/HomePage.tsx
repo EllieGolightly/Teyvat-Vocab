@@ -1,7 +1,7 @@
 import { useState, useCallback, useEffect, useRef } from 'react';
 import { Image } from '@/components/ui/image';
 import { ASSETS } from '@/lib/assets';
-import { getPrefs, savePrefs, type WidgetLayoutItem, type WidgetType, type StickerPosition } from '@/lib/prefs';
+import { getPrefs, savePrefs, WIDGET_SIZES, type WidgetLayoutItem, type WidgetType, type StickerPosition } from '@/lib/prefs';
 import WidgetGrid from '@/components/WidgetGrid';
 import TodayPlanWidget from '@/components/widgets/TodayPlanWidget';
 import WeeklyStatsWidget from '@/components/widgets/WeeklyStatsWidget';
@@ -28,7 +28,7 @@ import { usePWAInstall, useServiceWorkerStatus } from '@/hooks/use-pwa';
 
 const WIDGET_CATALOG: Array<{ type: WidgetType; label: string; defaultColSpan: number; defaultRowSpan: number }> = [
   { type: 'today-plan', label: '今日计划', defaultColSpan: 2, defaultRowSpan: 2 },
-  { type: 'weekly-stats', label: '本周统计', defaultColSpan: 2, defaultRowSpan: 1 },
+  { type: 'weekly-stats', label: '本周统计', defaultColSpan: 1, defaultRowSpan: 1 },
   { type: 'streak', label: '连续打卡', defaultColSpan: 1, defaultRowSpan: 1 },
   { type: 'venti-quote', label: '温迪寄语', defaultColSpan: 2, defaultRowSpan: 1 },
   { type: 'book-illustration', label: '青蓝词书', defaultColSpan: 2, defaultRowSpan: 2 },
@@ -108,8 +108,8 @@ export default function HomePage() {
       type,
       col,
       row,
-      colSpan: catalog.defaultColSpan,
-      rowSpan: catalog.defaultRowSpan,
+      colSpan: WIDGET_SIZES[type].colSpan,
+      rowSpan: WIDGET_SIZES[type].rowSpan,
     };
 
     saveWidgets([...widgets, newWidget]);
@@ -119,18 +119,7 @@ export default function HomePage() {
 
   const removeWidget = (id: string) => {
     saveWidgets(widgets.filter((w) => w.id !== id));
-  };
-
-  const toggleWidgetSize = (id: string) => {
-    saveWidgets(
-      widgets.map((w) => {
-        if (w.id !== id) return w;
-        // Toggle between 1x and 2x span (both dimensions)
-        const newColSpan = w.colSpan === 1 ? 2 : 1;
-        const newRowSpan = w.rowSpan === 1 ? 2 : 1;
-        return { ...w, colSpan: newColSpan, rowSpan: newRowSpan };
-      })
-    );
+    toast.success('已移除，可从组件库重新添加');
   };
 
   const renderWidget = (w: WidgetLayoutItem) => {
@@ -171,25 +160,22 @@ export default function HomePage() {
     if (!isEditMode) return content;
 
     return (
-      <div className="relative h-full w-full group">
+      <div className="relative h-full w-full rounded-[22px] ring-2 ring-white/80 shadow-lg">
         {content}
-        {/* edit overlay */}
-        <div className="absolute inset-0 bg-primary/10 backdrop-blur-[1px] rounded-2xl opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-2">
-          <button
-            className="w-9 h-9 rounded-full bg-white shadow-md flex items-center justify-center text-foreground hover:bg-muted transition-colors min-h-[36px]"
-            onClick={(e) => { e.stopPropagation(); toggleWidgetSize(w.id); }}
-            title="切换尺寸"
-          >
-            <Plus className="w-4 h-4" />
-          </button>
-          <button
-            className="w-9 h-9 rounded-full bg-destructive text-destructive-foreground shadow-md flex items-center justify-center hover:opacity-90 transition-opacity min-h-[36px]"
-            onClick={(e) => { e.stopPropagation(); removeWidget(w.id); }}
-            title="删除组件"
-          >
-            <X className="w-4 h-4" />
-          </button>
-        </div>
+        <button
+          data-widget-action
+          type="button"
+          className="absolute -right-2 -top-2 z-40 flex h-8 w-8 items-center justify-center rounded-full border border-white/80 bg-slate-800/85 text-white shadow-lg backdrop-blur-md active:scale-95"
+          onPointerDown={(event) => event.stopPropagation()}
+          onClick={(event) => {
+            event.stopPropagation();
+            removeWidget(w.id);
+          }}
+          aria-label={`移除${WIDGET_CATALOG.find((item) => item.type === w.type)?.label ?? '组件'}`}
+          title="移除组件"
+        >
+          <X className="h-4 w-4" strokeWidth={2.2} />
+        </button>
       </div>
     );
   };
@@ -235,12 +221,12 @@ export default function HomePage() {
 
   return (
     <div
-      className="relative min-h-screen w-full overflow-x-hidden"
+      className="relative min-h-[100dvh] w-full overflow-x-hidden"
       style={{
         backgroundImage: `url(${ASSETS.mondstadtBg})`,
         backgroundSize: 'cover',
+        backgroundColor: '#91bce8',
         backgroundPosition: 'center top',
-        backgroundAttachment: 'fixed',
       }}
       onPointerMove={handleStickerPointerMove}
       onPointerUp={handleStickerPointerUp}
@@ -248,58 +234,51 @@ export default function HomePage() {
       {/* overlay gradient for readability */}
       <div className="absolute inset-0 bg-gradient-to-b from-sky-100/40 via-transparent to-background/30 pointer-events-none" />
 
-      {/* top bar */}
-      <header className="sticky top-0 z-30 w-full">
-        <div className="backdrop-blur-md bg-white/30 border-b border-white/20">
-          <div className="max-w-2xl mx-auto px-4 h-14 flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <div className="w-8 h-8 rounded-lg bg-white/60 flex items-center justify-center overflow-hidden shadow-sm">
-                <Image src={ASSETS.appIcon} alt="logo" className="w-full h-full object-cover" />
-              </div>
-              <span className="font-semibold text-foreground">Teyvat Vocab</span>
+      {/* main content: controls live in the greeting, with no separate app bar */}
+      <main
+        className="relative z-10 mx-auto max-w-2xl px-4 pb-6"
+        style={{ paddingTop: 'calc(env(safe-area-inset-top) + 16px)' }}
+      >
+        <div className="mb-5">
+          <div className="flex items-center justify-between gap-3">
+            <div className="text-sm font-medium text-slate-700/80">
+              {new Date().toLocaleDateString('zh-CN', { month: 'long', day: 'numeric', weekday: 'long' })}
             </div>
-            <div className="flex items-center gap-1">
+            <div className="flex shrink-0 items-center gap-2">
               <button
+                type="button"
                 onClick={() => setWidgetLibraryOpen(true)}
-                className="w-10 h-10 rounded-full bg-white/50 hover:bg-white/70 backdrop-blur-sm border border-white/40 flex items-center justify-center text-foreground transition-colors min-h-[40px]"
+                className="flex h-9 w-9 items-center justify-center rounded-full border border-white/45 bg-white/25 text-slate-700 shadow-sm backdrop-blur-xl transition-colors active:bg-white/40"
                 aria-label="组件库"
               >
-                <Plus className="w-5 h-5" />
+                <Plus className="h-[18px] w-[18px]" strokeWidth={1.9} />
               </button>
               <button
+                type="button"
                 onClick={() => setIsEditMode(!isEditMode)}
-                className={`w-10 h-10 rounded-full backdrop-blur-sm border flex items-center justify-center transition-colors min-h-[40px] ${
+                className={`flex h-9 w-9 items-center justify-center rounded-full border shadow-sm backdrop-blur-xl transition-colors ${
                   isEditMode
-                    ? 'bg-primary text-primary-foreground border-primary'
-                    : 'bg-white/50 hover:bg-white/70 border-white/40 text-foreground'
+                    ? 'border-primary/70 bg-primary text-primary-foreground'
+                    : 'border-white/45 bg-white/25 text-slate-700 active:bg-white/40'
                 }`}
-                aria-label="编辑布局"
+                aria-label={isEditMode ? '完成布局' : '编辑布局'}
               >
-                <Edit3 className="w-5 h-5" />
+                <Edit3 className="h-[17px] w-[17px]" strokeWidth={1.9} />
               </button>
               <button
+                type="button"
                 onClick={() => {
                   setGoalInput(String(getPrefs().dailyGoal));
                   setSettingsOpen(true);
                 }}
-                className="w-10 h-10 rounded-full bg-white/50 hover:bg-white/70 backdrop-blur-sm border border-white/40 flex items-center justify-center text-foreground transition-colors min-h-[40px]"
+                className="flex h-9 w-9 items-center justify-center rounded-full border border-white/45 bg-white/25 text-slate-700 shadow-sm backdrop-blur-xl transition-colors active:bg-white/40"
                 aria-label="设置"
               >
-                <Settings className="w-5 h-5" />
+                <Settings className="h-[18px] w-[18px]" strokeWidth={1.9} />
               </button>
             </div>
           </div>
-        </div>
-      </header>
-
-      {/* main content */}
-      <main className="relative z-10 max-w-2xl mx-auto px-4 py-6">
-        {/* date greeting */}
-        <div className="mb-4">
-          <div className="text-sm text-muted-foreground">
-            {new Date().toLocaleDateString('zh-CN', { month: 'long', day: 'numeric', weekday: 'long' })}
-          </div>
-          <h1 className="text-2xl font-bold text-foreground mt-1">
+          <h1 className="mt-2 max-w-[20rem] text-[26px] font-bold leading-tight text-slate-800 drop-shadow-sm">
             {stats.today.newCompleted >= stats.today.dailyGoal ? '今天也很棒！' : '旅行者，开始今天的学习吧'}
           </h1>
         </div>
@@ -307,7 +286,7 @@ export default function HomePage() {
         {/* widget grid */}
         <WidgetGrid
           cols={prefs.gridCols}
-          rowHeight={88}
+          rowHeight={104}
           gap={12}
           widgets={widgets}
           onWidgetsChange={saveWidgets}
@@ -349,9 +328,19 @@ export default function HomePage() {
 
       {/* edit mode indicator */}
       {isEditMode && (
-        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50">
-          <div className="bg-foreground text-background px-4 py-2 rounded-full text-sm shadow-lg">
-            编辑模式 · 拖动组件调整位置
+        <div
+          className="fixed left-1/2 z-50 -translate-x-1/2"
+          style={{ bottom: 'calc(env(safe-area-inset-bottom) + 16px)' }}
+        >
+          <div className="flex items-center gap-3 whitespace-nowrap rounded-full bg-slate-800/85 py-2 pl-4 pr-2 text-xs text-white shadow-xl backdrop-blur-xl">
+            <span>拖动卡片 · 点 × 移除</span>
+            <button
+              type="button"
+              onClick={() => setIsEditMode(false)}
+              className="rounded-full bg-white px-3 py-1.5 font-medium text-slate-800"
+            >
+              完成
+            </button>
           </div>
         </div>
       )}

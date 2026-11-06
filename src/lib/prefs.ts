@@ -24,6 +24,58 @@ export type WidgetType =
   | 'achievements'
   | 'settings';
 
+export const WIDGET_SIZES: Record<WidgetType, { colSpan: number; rowSpan: number }> = {
+  'today-plan': { colSpan: 2, rowSpan: 2 },
+  'weekly-stats': { colSpan: 1, rowSpan: 1 },
+  'word-of-day': { colSpan: 2, rowSpan: 1 },
+  'venti-quote': { colSpan: 2, rowSpan: 1 },
+  'book-illustration': { colSpan: 2, rowSpan: 2 },
+  streak: { colSpan: 1, rowSpan: 1 },
+  favorites: { colSpan: 1, rowSpan: 1 },
+  achievements: { colSpan: 1, rowSpan: 1 },
+  settings: { colSpan: 1, rowSpan: 1 },
+};
+
+/** Repair layouts saved by the old resizable version and enforce one size per widget. */
+export function normalizeWidgets(widgets: WidgetLayoutItem[]): WidgetLayoutItem[] {
+  const placed: WidgetLayoutItem[] = [];
+  const ordered = widgets
+    .filter((widget) => Object.prototype.hasOwnProperty.call(WIDGET_SIZES, widget.type))
+    .slice()
+    .sort((a, b) => a.row - b.row || a.col - b.col);
+
+  for (const widget of ordered) {
+    const size = WIDGET_SIZES[widget.type];
+    const desiredCol = Math.max(0, Math.min(4 - size.colSpan, widget.col));
+    const desiredRow = Math.max(0, widget.row);
+    let best: { col: number; row: number; distance: number } | null = null;
+
+    for (let row = 0; row < 80; row += 1) {
+      for (let col = 0; col <= 4 - size.colSpan; col += 1) {
+        const collides = placed.some(
+          (other) =>
+            col < other.col + other.colSpan &&
+            col + size.colSpan > other.col &&
+            row < other.row + other.rowSpan &&
+            row + size.rowSpan > other.row,
+        );
+        if (collides) continue;
+        const distance = Math.abs(col - desiredCol) + Math.abs(row - desiredRow);
+        if (!best || distance < best.distance) best = { col, row, distance };
+      }
+      if (best && best.distance === 0) break;
+    }
+
+    placed.push({
+      ...widget,
+      ...size,
+      col: best?.col ?? 0,
+      row: best?.row ?? placed.length * 2,
+    });
+  }
+  return placed;
+}
+
 export interface StickerPosition {
   id: string;
   x: number; // percentage 0-100
@@ -69,7 +121,8 @@ export function getPrefs(): AppPrefs {
     const raw = scopedStorage.getItem(PREFS_KEY);
     if (raw) {
       const parsed = JSON.parse(raw);
-      cachedPrefs = { ...DEFAULT_PREFS, ...parsed };
+      const merged = { ...DEFAULT_PREFS, ...parsed, gridCols: 4 };
+      cachedPrefs = { ...merged, widgets: normalizeWidgets(merged.widgets) };
       return cachedPrefs;
     }
   } catch (err) {

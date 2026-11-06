@@ -1,26 +1,34 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import {
-  getPrefs,
-  savePrefs,
-  type WidgetLayoutItem,
-  type WidgetType,
-} from '@/lib/prefs';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import type { CSSProperties, PointerEvent as ReactPointerEvent, ReactNode } from 'react';
+import type { WidgetLayoutItem } from '@/lib/prefs';
 
 interface WidgetGridProps {
   cols: number;
-  rowHeight: number; // px (approximate, will use CSS grid auto)
-  gap: number; // px
+  rowHeight: number;
+  gap: number;
   widgets: WidgetLayoutItem[];
   onWidgetsChange: (widgets: WidgetLayoutItem[]) => void;
   isEditMode: boolean;
-  renderWidget: (w: WidgetLayoutItem) => React.ReactNode;
+  renderWidget: (widget: WidgetLayoutItem) => ReactNode;
   className?: string;
 }
 
-/**
- * 4-column widget grid with drag-and-drop + collision detection + snap-to-grid.
- * MVP implementation: supports drag to move, find nearest empty cell on collision.
- */
+interface DragSession {
+  id: string;
+  pointerId: number;
+  grabOffsetX: number;
+  grabOffsetY: number;
+  initialLeft: number;
+  initialTop: number;
+  width: number;
+  height: number;
+  startX: number;
+  startY: number;
+  moved: boolean;
+  preview: { col: number; row: number };
+}
+
+/** Fixed-size, four-column widget grid with direct, pointer-following drag feedback. */
 export default function WidgetGrid({
   cols,
   rowHeight,
@@ -32,217 +40,224 @@ export default function WidgetGrid({
   className,
 }: WidgetGridProps) {
   const gridRef = useRef<HTMLDivElement>(null);
+  const ghostRef = useRef<HTMLDivElement>(null);
+  const sessionRef = useRef<DragSession | null>(null);
+  const suppressClickRef = useRef(false);
   const [draggingId, setDraggingId] = useState<string | null>(null);
-  const [dragPos, setDragPos] = useState<{ x: number; y: number } | null>(null);
   const [previewCell, setPreviewCell] = useState<{ col: number; row: number } | null>(null);
-  const dragStartInfo = useRef<{
-    id: string;
-    startX: number;
-    startY: number;
-    origCol: number;
-    origRow: number;
-  } | null>(null);
-
-  const cellSize = useMemo(() => {
-    // Will be calculated from grid actual width
-    return { width: 0, height: rowHeight };
-  }, [rowHeight]);
-
-  const getCellFromPoint = useCallback(
-    (clientX: number, clientY: number): { col: number; row: number } | null => {
-      const grid = gridRef.current;
-      if (!grid) return null;
-      const rect = grid.getBoundingClientRect();
-      const x = clientX - rect.left;
-      const y = clientY - rect.top;
-      const cellW = (rect.width - gap * (cols - 1)) / cols;
-      const cellH = rowHeight;
-      const col = Math.floor((x + gap / 2) / (cellW + gap));
-      const row = Math.floor((y + gap / 2) / (cellH + gap));
-      if (col < 0 || col >= cols || row < 0) return null;
-      return { col, row };
-    },
-    [cols, rowHeight, gap]
-  );
 
   const findNearestEmptySpot = useCallback(
-    (
-      startCol: number,
-      startRow: number,
-      colSpan: number,
-      rowSpan: number,
-      excludeId: string
-    ): { col: number; row: number } | null => {
-      // BFS-like: search cells in expanding rings from start
-      const visited = new Set<string>();
-      const queue: Array<{ col: number; row: number; dist: number }> = [
-        { col: startCol, row: startRow, dist: 0 },
-      ];
+    (startCol: number, startRow: number, colSpan: number, rowSpan: number, excludeId: string) => {
+      const occupied = (col: number, row: number) =>
+        widgets.some((widget) => {
+          if (widget.id === excludeId) return false;
+          return (
+            col < widget.col + widget.colSpan &&
+            col + colSpan > widget.col &&
+            row < widget.row + widget.rowSpan &&
+            row + rowSpan > widget.row
+          );
+        });
 
-      const occupied = (c: number, r: number): boolean => {
-        for (const w of widgets) {
-          if (w.id === excludeId) continue;
+      const lastRow = Math.max(12, ...widgets.map((widget) => widget.row + widget.rowSpan + 4));
+      let best: { col: number; row: number; distance: number } | null = null;
+      for (let row = 0; row <= lastRow; row += 1) {
+        for (let col = 0; col <= cols - colSpan; col += 1) {
+          if (occupied(col, row)) continue;
+          const distance = Math.abs(col - startCol) + Math.abs(row - startRow);
           if (
-            c < w.col + w.colSpan &&
-            c + colSpan > w.col &&
-            r < w.row + w.rowSpan &&
-            r + rowSpan > w.row
+            !best ||
+            distance < best.distance ||
+            (distance === best.distance && (row < best.row || (row === best.row && col < best.col)))
           ) {
-            return true;
+            best = { col, row, distance };
           }
         }
-        return false;
-      };
-
-      let best: { col: number; row: number; dist: number } | null = null;
-
-      while (queue.length > 0 && queue.length < 200) {
-        const cur = queue.shift()!;
-        const key = `${cur.col},${cur.row}`;
-        if (visited.has(key)) continue;
-        visited.add(key);
-
-        if (cur.col < 0 || cur.col + colSpan > cols || cur.row < 0) {
-          // continue to neighbors but don't consider this cell
-        } else if (!occupied(cur.col, cur.row)) {
-          if (!best || cur.dist < best.dist) {
-            best = { col: cur.col, row: cur.row, dist: cur.dist };
-            // If we found a spot at distance 0 or 1, that's great
-            if (cur.dist <= 1) break;
-          }
-        }
-
-        // Add neighbors
-        queue.push({ col: cur.col + 1, row: cur.row, dist: cur.dist + 1 });
-        queue.push({ col: cur.col - 1, row: cur.row, dist: cur.dist + 1 });
-        queue.push({ col: cur.col, row: cur.row + 1, dist: cur.dist + 1 });
-        queue.push({ col: cur.col, row: cur.row - 1, dist: cur.dist + 1 });
       }
-
       return best ? { col: best.col, row: best.row } : null;
     },
-    [widgets, cols]
+    [cols, widgets],
   );
 
-  const handleDragStart = useCallback(
-    (e: React.PointerEvent, widget: WidgetLayoutItem) => {
-      if (!isEditMode) return;
-      e.preventDefault();
-      (e.target as HTMLElement).setPointerCapture?.(e.pointerId);
-      setDraggingId(widget.id);
-      dragStartInfo.current = {
+  const updateGhostPosition = useCallback((clientX: number, clientY: number) => {
+    const session = sessionRef.current;
+    const ghost = ghostRef.current;
+    if (!session || !ghost) return;
+    ghost.style.transform = `translate3d(${clientX - session.grabOffsetX}px, ${clientY - session.grabOffsetY}px, 0)`;
+  }, []);
+
+  const handlePointerDown = useCallback(
+    (event: ReactPointerEvent<HTMLDivElement>, widget: WidgetLayoutItem) => {
+      if (!isEditMode || event.button !== 0) return;
+      const target = event.target as HTMLElement;
+      if (target.closest('[data-widget-action]')) return;
+
+      event.preventDefault();
+      event.currentTarget.setPointerCapture(event.pointerId);
+      const rect = event.currentTarget.getBoundingClientRect();
+      const session: DragSession = {
         id: widget.id,
-        startX: e.clientX,
-        startY: e.clientY,
-        origCol: widget.col,
-        origRow: widget.row,
+        pointerId: event.pointerId,
+        grabOffsetX: event.clientX - rect.left,
+        grabOffsetY: event.clientY - rect.top,
+        initialLeft: rect.left,
+        initialTop: rect.top,
+        width: rect.width,
+        height: rect.height,
+        startX: event.clientX,
+        startY: event.clientY,
+        moved: false,
+        preview: { col: widget.col, row: widget.row },
       };
-      setDragPos({ x: e.clientX, y: e.clientY });
+      sessionRef.current = session;
+      setDraggingId(widget.id);
+      setPreviewCell(session.preview);
+      document.body.style.userSelect = 'none';
+      requestAnimationFrame(() => updateGhostPosition(event.clientX, event.clientY));
     },
-    [isEditMode]
+    [isEditMode, updateGhostPosition],
   );
 
-  const handleDragMove = useCallback(
-    (e: React.PointerEvent) => {
-      if (!draggingId) return;
-      setDragPos({ x: e.clientX, y: e.clientY });
+  const handlePointerMove = useCallback(
+    (event: ReactPointerEvent<HTMLDivElement>, widget: WidgetLayoutItem) => {
+      const session = sessionRef.current;
+      const grid = gridRef.current;
+      if (!session || !grid || session.pointerId !== event.pointerId || session.id !== widget.id) return;
+      event.preventDefault();
 
-      const widget = widgets.find((w) => w.id === draggingId);
-      if (!widget) return;
+      if (Math.hypot(event.clientX - session.startX, event.clientY - session.startY) > 4) {
+        session.moved = true;
+      }
+      // Move the actual card synchronously; React only updates the snap preview.
+      updateGhostPosition(event.clientX, event.clientY);
 
-      const cell = getCellFromPoint(e.clientX, e.clientY);
-      if (cell) {
-        // Find nearest valid spot (including the cell itself if empty)
-        const spot = findNearestEmptySpot(cell.col, cell.row, widget.colSpan, widget.rowSpan, widget.id);
+      const rect = grid.getBoundingClientRect();
+      const cellWidth = (rect.width - gap * (cols - 1)) / cols;
+      const proposedCol = Math.round(
+        (event.clientX - session.grabOffsetX - rect.left) / (cellWidth + gap),
+      );
+      const proposedRow = Math.round(
+        (event.clientY - session.grabOffsetY - rect.top) / (rowHeight + gap),
+      );
+      const col = Math.max(0, Math.min(cols - widget.colSpan, proposedCol));
+      const row = Math.max(0, proposedRow);
+      const spot = findNearestEmptySpot(col, row, widget.colSpan, widget.rowSpan, widget.id);
+      if (!spot) return;
+      if (spot.col !== session.preview.col || spot.row !== session.preview.row) {
+        session.preview = spot;
         setPreviewCell(spot);
-      } else {
-        setPreviewCell(null);
       }
     },
-    [draggingId, widgets, getCellFromPoint, findNearestEmptySpot]
+    [cols, findNearestEmptySpot, gap, rowHeight, updateGhostPosition],
   );
 
-  const handleDragEnd = useCallback(
-    (e: React.PointerEvent) => {
-      if (!draggingId) return;
-      const widget = widgets.find((w) => w.id === draggingId);
-      if (widget && previewCell) {
-        const newWidgets = widgets.map((w) =>
-          w.id === draggingId ? { ...w, col: previewCell.col, row: previewCell.row } : w
+  const finishDrag = useCallback(
+    (event: ReactPointerEvent<HTMLDivElement>, cancelled = false) => {
+      const session = sessionRef.current;
+      if (!session || session.pointerId !== event.pointerId) return;
+      if (!cancelled) {
+        onWidgetsChange(
+          widgets.map((widget) =>
+            widget.id === session.id
+              ? { ...widget, col: session.preview.col, row: session.preview.row }
+              : widget,
+          ),
         );
-        onWidgetsChange(newWidgets);
       }
+      if (session.moved) {
+        suppressClickRef.current = true;
+        window.setTimeout(() => {
+          suppressClickRef.current = false;
+        }, 0);
+      }
+      if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+        event.currentTarget.releasePointerCapture(event.pointerId);
+      }
+      sessionRef.current = null;
+      document.body.style.userSelect = '';
       setDraggingId(null);
-      setDragPos(null);
       setPreviewCell(null);
-      dragStartInfo.current = null;
     },
-    [draggingId, widgets, previewCell, onWidgetsChange]
+    [onWidgetsChange, widgets],
   );
 
-  const gridStyle = useMemo<React.CSSProperties>(() => {
-    return {
-      display: 'grid',
-      gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))`,
-      gridAutoRows: `${rowHeight}px`,
-      gap: `${gap}px`,
-      position: 'relative',
-    };
-  }, [cols, rowHeight, gap]);
+  useEffect(
+    () => () => {
+      document.body.style.userSelect = '';
+    },
+    [],
+  );
+
+  const draggingWidget = widgets.find((widget) => widget.id === draggingId);
+  const dragSession = sessionRef.current;
+  const gridStyle: CSSProperties = {
+    display: 'grid',
+    gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))`,
+    gridAutoRows: `${rowHeight}px`,
+    gap: `${gap}px`,
+    position: 'relative',
+  };
 
   return (
-    <div
-      ref={gridRef}
-      style={gridStyle}
-      className={className}
-      onPointerMove={handleDragMove}
-      onPointerUp={handleDragEnd}
-      onPointerCancel={handleDragEnd}
-    >
-      {widgets.map((w) => (
+    <div ref={gridRef} style={gridStyle} className={className}>
+      {previewCell && draggingWidget && (
         <div
-          key={w.id}
+          aria-hidden="true"
+          className="rounded-[22px] border-2 border-dashed border-white/90 bg-primary/15 shadow-inner"
           style={{
-            gridColumn: `${w.col + 1} / span ${w.colSpan}`,
-            gridRow: `${w.row + 1} / span ${w.rowSpan}`,
-            minHeight: rowHeight,
-            visibility: draggingId === w.id ? 'hidden' : 'visible',
+            gridColumn: `${previewCell.col + 1} / span ${draggingWidget.colSpan}`,
+            gridRow: `${previewCell.row + 1} / span ${draggingWidget.rowSpan}`,
+            pointerEvents: 'none',
+            zIndex: 0,
           }}
-          onPointerDown={(e) => handleDragStart(e, w)}
+        />
+      )}
+
+      {widgets.map((widget) => (
+        <div
+          key={widget.id}
+          className={isEditMode ? 'cursor-grab active:cursor-grabbing' : ''}
+          style={{
+            gridColumn: `${widget.col + 1} / span ${widget.colSpan}`,
+            gridRow: `${widget.row + 1} / span ${widget.rowSpan}`,
+            minWidth: 0,
+            minHeight: 0,
+            opacity: draggingId === widget.id ? 0.16 : 1,
+            touchAction: isEditMode ? 'none' : 'auto',
+            position: 'relative',
+            zIndex: 1,
+          }}
+          onPointerDown={(event) => handlePointerDown(event, widget)}
+          onPointerMove={(event) => handlePointerMove(event, widget)}
+          onPointerUp={(event) => finishDrag(event)}
+          onPointerCancel={(event) => finishDrag(event, true)}
+          onClickCapture={(event) => {
+            const isAction = (event.target as HTMLElement).closest('[data-widget-action]');
+            if (suppressClickRef.current || (isEditMode && !isAction)) {
+              event.preventDefault();
+              event.stopPropagation();
+            }
+          }}
         >
-          {renderWidget(w)}
+          {renderWidget(widget)}
         </div>
       ))}
 
-      {/* Drag preview ghost */}
-      {draggingId && dragPos && previewCell && (() => {
-        const w = widgets.find((x) => x.id === draggingId);
-        if (!w) return null;
-        const grid = gridRef.current;
-        if (!grid) return null;
-        const rect = grid.getBoundingClientRect();
-        const cellW = (rect.width - gap * (cols - 1)) / cols;
-        const left = previewCell.col * (cellW + gap);
-        const top = previewCell.row * (rowHeight + gap);
-        const width = w.colSpan * cellW + (w.colSpan - 1) * gap;
-        const height = w.rowSpan * rowHeight + (w.rowSpan - 1) * gap;
-        return (
-          <div
-            style={{
-              position: 'absolute',
-              left,
-              top,
-              width,
-              height,
-              border: '2px dashed var(--primary)',
-              borderRadius: 'var(--radius-xl)',
-              backgroundColor: 'hsl(from var(--primary) h s l / 0.15)',
-              pointerEvents: 'none',
-              zIndex: 50,
-            }}
-          />
-        );
-      })()}
+      {draggingWidget && dragSession && (
+        <div
+          ref={ghostRef}
+          aria-hidden="true"
+          className="pointer-events-none fixed left-0 top-0 z-[80] opacity-95 drop-shadow-2xl"
+          style={{
+            width: dragSession.width,
+            height: dragSession.height,
+            transform: `translate3d(${dragSession.initialLeft}px, ${dragSession.initialTop}px, 0)`,
+            willChange: 'transform',
+          }}
+        >
+          <div className="h-full w-full scale-[1.025]">{renderWidget(draggingWidget)}</div>
+        </div>
+      )}
     </div>
   );
 }
