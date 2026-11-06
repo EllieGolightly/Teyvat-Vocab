@@ -6,7 +6,7 @@
  *  - 仅缓存 GET 请求，导航请求走网络优先 + 离线回退
  */
 
-const APP_VERSION = 'v8';
+const APP_VERSION = 'v9';
 const SHELL_CACHE = `teyvat-shell-${APP_VERSION}`;
 const LEXICON_CACHE = `teyvat-lexicon-v1`;
 const ASSET_CACHE = `teyvat-assets-v1`;
