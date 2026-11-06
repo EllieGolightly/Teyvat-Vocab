@@ -128,7 +128,6 @@ export const Image = React.forwardRef<HTMLImageElement, ImageProps>(
           sizes={sizes}
           srcSet={userSrcSet}
           className={cn(
-            'bg-linear-to-b from-gray-50/20 to-gray-200/20',
             className,
           )}
           loading={loading}
@@ -168,7 +167,6 @@ export const Image = React.forwardRef<HTMLImageElement, ImageProps>(
         sizes={sizes}
         srcSet={srcSet}
         className={cn(
-          'bg-linear-to-b from-gray-50/20 to-gray-200/20',
           className,
         )}
         loading={loading}

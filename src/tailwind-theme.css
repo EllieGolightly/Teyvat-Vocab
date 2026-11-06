@@ -9,13 +9,13 @@
   --elevate-1: rgba(0,0,0, .03);
   --elevate-2: rgba(0,0,0, .08);
 
-  --background: hsl(200 40% 96%);
-  --foreground: hsl(210 30% 20%);
+  --background: hsl(36 42% 97%);
+  --foreground: hsl(243 20% 30%);
   --card: hsl(0 0% 100% / 0.72);
   --card-foreground: hsl(210 30% 20%);
   --popover: hsl(0 0% 100% / 0.85);
   --popover-foreground: hsl(210 30% 20%);
-  --primary: hsl(200 60% 45%);
+  --primary: hsl(239 35% 59%);
   --primary-foreground: hsl(200 40% 98%);
   --secondary: hsl(40 80% 96%);
   --secondary-foreground: hsl(30 30% 25%);

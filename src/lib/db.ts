@@ -71,6 +71,11 @@ export interface UndoEntry {
   rating: 'unknown' | 'fuzzy' | 'known';
   timestamp: number;
   wasFirstRating: boolean;
+  // Optional for compatibility with entries written by the first app version.
+  date?: string;
+  prevQueue?: DailyQueue;
+  prevDailyStat?: DailyStat;
+  ratingRecordId?: number;
 }
 
 const DB_NAME = 'teyvat-vocab';
@@ -84,8 +89,18 @@ export function openDB(): Promise<IDBDatabase> {
   dbPromise = new Promise((resolve, reject) => {
     try {
       const req = indexedDB.open(DB_NAME, DB_VERSION);
-      req.onerror = () => reject(req.error);
-      req.onsuccess = () => resolve(req.result);
+      req.onerror = () => {
+        dbPromise = null;
+        reject(req.error);
+      };
+      req.onsuccess = () => {
+        const db = req.result;
+        db.onversionchange = () => {
+          db.close();
+          dbPromise = null;
+        };
+        resolve(db);
+      };
       req.onupgradeneeded = (e) => {
         const db = (e.target as IDBOpenDBRequest).result;
 
@@ -117,11 +132,42 @@ export function openDB(): Promise<IDBDatabase> {
         }
       };
     } catch (err) {
+      // Clear on the next microtask: the Promise assignment has not completed yet.
+      queueMicrotask(() => { dbPromise = null; });
       reject(err);
     }
   });
 
   return dbPromise;
+}
+
+export function requestResult<T>(request: IDBRequest<T>): Promise<T> {
+  return new Promise((resolve, reject) => {
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error);
+  });
+}
+
+/** Resolve only after commit; a failed operation rolls back every store together. */
+export async function runTransaction<T>(
+  stores: string[],
+  mode: IDBTransactionMode,
+  operation: (tx: IDBTransaction) => Promise<T>,
+): Promise<T> {
+  const db = await openDB();
+  return new Promise<T>((resolve, reject) => {
+    const tx = db.transaction(stores, mode);
+    let result: T;
+    let operationError: unknown;
+    tx.oncomplete = () => resolve(result);
+    tx.onabort = () => reject(operationError ?? tx.error ?? new Error('本地数据保存失败，请重试'));
+    // onabort is the single failure path, including request errors.
+    tx.onerror = () => {};
+    operation(tx).then((value) => { result = value; }).catch((error: unknown) => {
+      operationError = error;
+      try { tx.abort(); } catch { reject(error); }
+    });
+  });
 }
 
 // ---------- words (lexicon) ----------

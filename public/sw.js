@@ -6,7 +6,7 @@
  *  - 仅缓存 GET 请求，导航请求走网络优先 + 离线回退
  */
 
-const APP_VERSION = 'v4';
+const APP_VERSION = 'v7';
 const SHELL_CACHE = `teyvat-shell-${APP_VERSION}`;
 const LEXICON_CACHE = `teyvat-lexicon-v1`;
 const ASSET_CACHE = `teyvat-assets-v1`;
@@ -33,6 +33,7 @@ const PRECACHE_ASSETS = [
   './icons/apple-touch-icon.png',
   './assets/mondstadt-bg.png',
   './assets/paimon-traveler.webp',
+  './assets/companions-hero.png',
   './assets/book-illustration.webp',
   './assets/venti-sticker.webp',
 ];
@@ -119,6 +120,13 @@ self.addEventListener('fetch', (event) => {
   // 1. 词书 JSON：缓存优先，长期不变
   if (url.pathname.endsWith('cet6-words.json')) {
     event.respondWith(cacheFirst(request, LEXICON_CACHE));
+    return;
+  }
+
+  // Built JS/CSS live under /assets too, but are precached in SHELL_CACHE.
+  // Match them first so the first offline restart can find the precached files.
+  if (/\.(?:js|css)$/.test(url.pathname)) {
+    event.respondWith(cacheFirst(request, SHELL_CACHE));
     return;
   }
 

@@ -2,13 +2,14 @@ import { StrictMode, useEffect } from "react";
 import { createRoot } from "react-dom/client";
 import { BrowserRouter } from "react-router-dom";
 import { ErrorBoundary } from "react-error-boundary";
-import { AppContainer, ErrorRender, logger } from "@lark-apaas/client-toolkit-lite";
+import { logger } from "@/lib/platform";
 import App from "./app";
 import { ASSETS, resolveAppUrl } from "@/lib/assets";
 import "./index.css";
 
 // 运行时设置 favicon（覆盖平台默认 appAvatar，确保派蒙图标生效）
 function setFavicon() {
+  document.title = 'Teyvat Vocab';
   const link = document.querySelector('link[rel="icon"]');
   if (link) {
     link.setAttribute('href', ASSETS.favicon);
@@ -78,15 +79,18 @@ function AppEntry() {
   return (
     <StrictMode>
       <BrowserRouter basename={import.meta.env.BASE_URL || "/"}>
-        <AppContainer>
           <ErrorBoundary
-            fallbackRender={({ error, resetErrorBoundary }) => (
-              <ErrorRender error={error} resetErrorBoundary={resetErrorBoundary} />
+            fallbackRender={({ resetErrorBoundary }) => (
+              <main className="study-loading" role="alert">
+                <h1>这一页暂时走丢了</h1>
+                <p>学习进度保存在此设备，可以重新打开。</p>
+                <button className="secondary-button" onClick={resetErrorBoundary}>重试</button>
+                <a className="text-link" href={import.meta.env.BASE_URL}>回到首页</a>
+              </main>
             )}
           >
             <App />
           </ErrorBoundary>
-        </AppContainer>
       </BrowserRouter>
     </StrictMode>
   );

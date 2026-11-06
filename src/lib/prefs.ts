@@ -1,6 +1,6 @@
 // Preferences stored in localStorage (scoped by appId)
-import { scopedStorage } from '@lark-apaas/client-toolkit-lite';
-import { logger } from '@lark-apaas/client-toolkit-lite';
+import { scopedStorage } from './platform';
+import { logger } from './platform';
 
 const PREFS_KEY = 'teyvat_vocab_prefs';
 
@@ -85,6 +85,7 @@ export interface StickerPosition {
 
 export interface AppPrefs {
   dailyGoal: number;
+  favoriteWordIds?: string[];
   themeColor: string; // primary color override (optional)
   wallpaper: string; // url or 'default'
   widgets: WidgetLayoutItem[];
@@ -134,11 +135,12 @@ export function getPrefs(): AppPrefs {
 }
 
 export function savePrefs(prefs: AppPrefs): void {
-  cachedPrefs = prefs;
   try {
     scopedStorage.setItem(PREFS_KEY, JSON.stringify(prefs));
+    cachedPrefs = prefs;
   } catch (err) {
     logger.error('Failed to save prefs:', String(err));
+    throw new Error('本地偏好保存失败，请检查浏览器存储空间后重试');
   }
 }
 

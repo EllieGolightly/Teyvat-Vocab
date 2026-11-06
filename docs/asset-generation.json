@@ -1,0 +1,8 @@
+{
+  "asset": "public/assets/companions-hero.png",
+  "tool": "built-in image_gen",
+  "date": "2026-11-06",
+  "reference": "User-provided ideal UI image (p1)",
+  "transparent_background": true,
+  "prompt": "Use case: illustration-story. Asset type: a transparent foreground hero illustration for the Teyvat Vocab app. The attached image is STYLE AND CHARACTER POSE REFERENCE ONLY, not an edit target: recreate ONLY the little chibi Paimon and Aether leaning on a cream stone parapet, no other portions of the screenshot. Wide 3:1 landscape composition. Paimon on the left smiling with closed eyes, both tiny hands over the stone ledge, halo fully visible. Aether on the right with golden hair and dark brown gloves resting sleepily on the ledge. Leave a gentle gap between them. Elegant soft watercolor anime rendering, delicate warm linework, pale cream, gold, white, navy, quiet friendly feeling. The stone parapet is very shallow, running along the bottom 15% of the image, straight horizontal bottom edge so it can sit on the top edge of a rounded app card. Subjects fill composition with very little empty transparent padding, all hair and halo fully inside image. Background must be real transparent alpha. NO sky, no castle, no flowers, no text, no UI, no badges, no white rectangular background. This is a clean foreground app asset, NOT a mockup or screen."
+}

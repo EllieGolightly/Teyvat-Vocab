@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { logger } from '@lark-apaas/client-toolkit-lite';
+import { logger } from '@/lib/platform';
 
 interface BeforeInstallPromptEvent extends Event {
   readonly platforms: string[];

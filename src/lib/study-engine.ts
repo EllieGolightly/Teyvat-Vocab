@@ -1,419 +1,340 @@
 import {
-  getWordState,
-  getAllWordStates,
-  putWordState,
-  getDailyQueue,
-  putDailyQueue,
-  getDailyStat,
-  putDailyStat,
-  pushUndoEntry,
-  popUndoEntry,
-  clearUndoStack,
-  addRatingRecord,
   getDateKey,
-  getDayStartMs,
-  getWord,
-  getAllWordIds,
-  openDB,
+  requestResult,
+  runTransaction,
+  type Word,
   type WordState,
   type DailyQueue,
   type DailyStat,
+  type RatingRecord,
   type UndoEntry,
 } from './db';
-
 import { getPrefs } from './prefs';
 
 export type Rating = 'unknown' | 'fuzzy' | 'known';
+export type StudyMode = 'all' | 'review';
 
-// SRS intervals (in days) by level
 const LEVEL_INTERVALS = [0, 1, 2, 4, 7, 15, 30];
 const MAX_LEVEL = 6;
+const DAY_MS = 24 * 60 * 60 * 1000;
+const UNKNOWN_REVIEW_DELAY_MS = 10 * 60 * 1000;
+const STUDY_STORES = ['words', 'wordStates', 'dailyQueue', 'dailyStats', 'ratingHistory', 'undoStack'];
 
-// In-day re-review interval for "unknown" (ms)
-const UNKNOWN_REVIEW_DELAY_MS = 10 * 60 * 1000; // 10 min
+// IndexedDB also serializes these readwrite transactions across tabs. The local
+// chain keeps related operations ordered before the database connection resolves.
+let pendingOperation: Promise<unknown> = Promise.resolve();
+let ratingInFlight = false;
+
+function mutate<T>(operation: (tx: IDBTransaction) => Promise<T>): Promise<T> {
+  const result = pendingOperation.then(() => runTransaction(STUDY_STORES, 'readwrite', operation));
+  pendingOperation = result.catch(() => undefined);
+  return result;
+}
 
 function getDefaultWordState(wordId: string): WordState {
-  return {
-    wordId,
-    status: 'new',
-    level: 0,
-    nextReview: 0,
-    lastReviewed: 0,
-    correctCount: 0,
-    wrongCount: 0,
-  };
+  return { wordId, status: 'new', level: 0, nextReview: 0, lastReviewed: 0, correctCount: 0, wrongCount: 0 };
 }
 
-/**
- * Ensure every word has a wordState entry (default to 'new').
- * Only called once during initial setup.
- */
-async function ensureWordStates(): Promise<void> {
-  const allIds = await getAllWordIds();
-  const existingStates = await getAllWordStates();
-  const existingIds = new Set(existingStates.map((s) => s.wordId));
+function emptyStat(date: string): DailyStat {
+  return { date, newLearned: 0, reviewed: 0, known: 0, fuzzy: 0, unknown: 0, streakContinued: false };
+}
 
-  const missing: WordState[] = [];
+function hasActivity(stat?: DailyStat): boolean {
+  return !!stat && (stat.newLearned > 0 || stat.reviewed > 0);
+}
+
+function getGoal(): number {
+  const value = getPrefs().dailyGoal;
+  return Number.isFinite(value) ? Math.max(5, Math.min(100, Math.round(value))) : 20;
+}
+
+interface QueueContext {
+  queue: DailyQueue;
+  states: Map<string, WordState>;
+  stat: DailyStat;
+  totalWords: number;
+}
+
+/** Reconcile only pending work; completed words and counters always survive. */
+async function synchronizeQueue(tx: IDBTransaction, now: number): Promise<QueueContext> {
+  const date = getDateKey(new Date(now));
+  const queueStore = tx.objectStore('dailyQueue');
+  const stateStore = tx.objectStore('wordStates');
+  const statStore = tx.objectStore('dailyStats');
+  const saved = await requestResult<DailyQueue | undefined>(queueStore.get(date));
+  const allIds = await requestResult(tx.objectStore('words').getAllKeys()) as string[];
+  const validIds = new Set(allIds);
+  const allStates = await requestResult<WordState[]>(stateStore.getAll());
+  const states = new Map(allStates.filter((state) => validIds.has(state.wordId)).map((state) => [state.wordId, state]));
   for (const id of allIds) {
-    if (!existingIds.has(id)) {
-      missing.push(getDefaultWordState(id));
+    if (!states.has(id)) {
+      const state = getDefaultWordState(id);
+      states.set(id, state);
+      stateStore.put(state);
     }
   }
 
-  if (missing.length > 0) {
-    // bulk insert in batches
-    const BATCH = 500;
-    for (let i = 0; i < missing.length; i += BATCH) {
-      const batch = missing.slice(i, i + BATCH);
-      const db = await openDB();
-      await new Promise<void>((resolve, reject) => {
-        const tx = db.transaction('wordStates', 'readwrite');
-        const store = tx.objectStore('wordStates');
-        batch.forEach((s) => store.put(s));
-        tx.oncomplete = () => resolve();
-        tx.onerror = () => reject(tx.error);
-      });
-    }
-  }
-}
-
-/**
- * Get or create today's daily queue.
- * If date has changed or queue doesn't exist, generate a new one.
- */
-export async function getOrCreateDailyQueue(): Promise<DailyQueue> {
-  const date = getDateKey();
-  let queue = await getDailyQueue(date);
-
-  if (queue) return queue;
-
-  // Ensure word states exist before generating queue
-  await ensureWordStates();
-
-  const prefs = getPrefs();
-  const dailyGoal = prefs.dailyGoal ?? 20;
-
-  // Find new words (status === 'new') sorted by wordId ascending, take first dailyGoal
-  const allStates = await getAllWordStates();
-  const dayStart = getDayStartMs(date);
-
-  const newWords = allStates
-    .filter((s) => s.status === 'new')
-    .sort((a, b) => a.wordId.localeCompare(b.wordId))
-    .slice(0, dailyGoal)
-    .map((s) => s.wordId);
-
-  const reviewWords = allStates
-    .filter((s) => s.status === 'learning' && s.nextReview <= dayStart)
-    .sort((a, b) => a.nextReview - b.nextReview)
-    .map((s) => s.wordId);
-
-  const allQueue = [...newWords, ...reviewWords];
-
-  queue = {
-    date,
-    newQueue: newWords,
-    reviewQueue: reviewWords,
-    queue: allQueue,
-    currentIndex: 0,
-    completed: 0,
-    newCompleted: 0,
-    reviewCompleted: 0,
-  };
-
-  await putDailyQueue(queue);
-
-  // Initialize daily stats if not exists
-  const existingStat = await getDailyStat(date);
-  if (!existingStat) {
-    // Calculate streak
-    const yesterday = new Date();
+  let stat = await requestResult<DailyStat | undefined>(statStore.get(date));
+  if (!stat) {
+    const yesterday = new Date(now);
     yesterday.setDate(yesterday.getDate() - 1);
-    const yKey = getDateKey(yesterday);
-    const yStat = await getDailyStat(yKey);
-    const streakContinued = !!yStat && (yStat.newLearned > 0 || yStat.reviewed > 0);
-
-    await putDailyStat({
-      date,
-      newLearned: 0,
-      reviewed: 0,
-      known: 0,
-      fuzzy: 0,
-      unknown: 0,
-      streakContinued,
-    });
+    const previous = await requestResult<DailyStat | undefined>(statStore.get(getDateKey(yesterday)));
+    stat = { ...emptyStat(date), streakContinued: hasActivity(previous) };
+    statStore.put(stat);
   }
 
-  // Clear undo stack for new day
-  await clearUndoStack();
-
-  return queue;
-}
-
-/**
- * Get the current word to study (at currentIndex).
- * Returns null if queue is complete.
- */
-export async function getCurrentWord(): Promise<{ word: import('./db').Word; index: number; total: number } | null> {
-  const queue = await getOrCreateDailyQueue();
-  if (queue.currentIndex >= queue.queue.length) return null;
-
-  const wordId = queue.queue[queue.currentIndex];
-  const word = await getWord(wordId);
-  if (!word) throw new Error(`Word not found: ${wordId}`);
-
-  return { word, index: queue.currentIndex, total: queue.queue.length };
-}
-
-/**
- * Apply a rating to the current word, advance to next.
- * Returns the updated queue state.
- */
-export async function rateCurrentWord(rating: Rating): Promise<DailyQueue> {
-  const queue = await getOrCreateDailyQueue();
-  if (queue.currentIndex >= queue.queue.length) return queue;
-
-  const wordId = queue.queue[queue.currentIndex];
-  const prevState = (await getWordState(wordId)) ?? getDefaultWordState(wordId);
-
-  const wasFirstRating = prevState.status === 'new';
-  const queueType: 'new' | 'review' = prevState.status === 'new' ? 'new' : 'review';
-
-  // Snapshot for undo
-  const undoEntry: Omit<UndoEntry, 'id'> = {
-    wordId,
-    prevWordState: { ...prevState },
-    prevQueueIndex: queue.currentIndex,
-    prevCompleted: queue.completed,
-    prevNewCompleted: queue.newCompleted,
-    prevReviewCompleted: queue.reviewCompleted,
-    rating,
-    timestamp: Date.now(),
-    wasFirstRating,
+  const queue: DailyQueue = saved ?? {
+    date, newQueue: [], reviewQueue: [], queue: [], currentIndex: 0,
+    completed: 0, newCompleted: 0, reviewCompleted: 0,
   };
-
-  // Calculate new state
-  const newState = computeNextState(prevState, rating);
-
-  // Update queue
-  const newQueue: DailyQueue = {
-    ...queue,
-    currentIndex: queue.currentIndex + 1,
-    completed: queue.completed + 1,
-    newCompleted: wasFirstRating ? queue.newCompleted + 1 : queue.newCompleted,
-    reviewCompleted: queueType === 'review' ? queue.reviewCompleted + 1 : queue.reviewCompleted,
-  };
-
-  // For "unknown" (in learning mode), re-add to end of queue for same-day review
-  if (rating === 'unknown' && !wasFirstRating) {
-    // don't add again if it's already at the end (avoid infinite loop for single word)
-    if (newQueue.queue[newQueue.queue.length - 1] !== wordId) {
-      newQueue.queue = [...newQueue.queue, wordId];
+  const completed = queue.queue.slice(0, queue.currentIndex);
+  const completedIds = new Set(completed);
+  const remainingNew = Math.max(0, getGoal() - queue.newCompleted);
+  const pending: string[] = [];
+  const selected = new Set<string>();
+  let selectedNew = 0;
+  const select = (id: string) => {
+    const state = states.get(id);
+    if (!state || selected.has(id)) return;
+    if (state.status === 'new') {
+      if (selectedNew >= remainingNew) return;
+      selectedNew++;
+    } else if (state.nextReview > now) {
+      return;
     }
-  }
-  // For "unknown" (first time / new), also add to tail for same-day re-review
-  if (rating === 'unknown' && wasFirstRating) {
-    newQueue.queue = [...newQueue.queue, wordId];
-  }
-
-  // Update daily stats
-  const date = getDateKey();
-  const stat = (await getDailyStat(date)) ?? {
-    date,
-    newLearned: 0,
-    reviewed: 0,
-    known: 0,
-    fuzzy: 0,
-    unknown: 0,
-    streakContinued: false,
+    selected.add(id);
+    pending.push(id);
   };
-
-  const newStat: DailyStat = {
-    ...stat,
-    newLearned: wasFirstRating ? stat.newLearned + 1 : stat.newLearned,
-    reviewed: queueType === 'review' ? stat.reviewed + 1 : stat.reviewed,
-    known: rating === 'known' ? stat.known + 1 : stat.known,
-    fuzzy: rating === 'fuzzy' ? stat.fuzzy + 1 : stat.fuzzy,
-    unknown: rating === 'unknown' ? stat.unknown + 1 : stat.unknown,
-  };
-
-  // Persist all
-  await putWordState(newState);
-  await putDailyQueue(newQueue);
-  await putDailyStat(newStat);
-  await pushUndoEntry(undoEntry);
-  await addRatingRecord({
-    wordId,
-    rating,
-    timestamp: Date.now(),
-    date,
-    queueType,
+  // Retain the order of still-needed work, including old v1 saved queues.
+  queue.queue.slice(queue.currentIndex).forEach(select);
+  allIds.slice().sort((a, b) => a.localeCompare(b)).forEach((id) => {
+    if (states.get(id)?.status === 'new') select(id);
   });
+  [...states.values()]
+    .filter((state) => state.status !== 'new' && state.nextReview <= now)
+    .sort((a, b) => a.nextReview - b.nextReview)
+    .forEach((state) => select(state.wordId));
 
-  return newQueue;
+  const newPending = pending.filter((id) => states.get(id)?.status === 'new');
+  const reviewPending = pending.filter((id) => states.get(id)?.status !== 'new');
+  const next: DailyQueue = {
+    ...queue,
+    queue: [...completed, ...pending],
+    newQueue: [...new Set([...queue.newQueue.filter((id) => completedIds.has(id)), ...newPending])],
+    reviewQueue: [...new Set([...queue.reviewQueue.filter((id) => completedIds.has(id)), ...reviewPending])],
+  };
+  queueStore.put(next);
+  if (!saved) tx.objectStore('undoStack').clear();
+  return { queue: next, states, stat, totalWords: allIds.length };
 }
 
-/**
- * Compute next word state based on rating.
- */
-function computeNextState(prev: WordState, rating: Rating): WordState {
-  const now = Date.now();
-  const state: WordState = { ...prev, lastReviewed: now };
+export function getOrCreateDailyQueue(): Promise<DailyQueue> {
+  return mutate(async (tx) => (await synchronizeQueue(tx, Date.now())).queue);
+}
 
-  if (rating === 'unknown') {
-    state.wrongCount += 1;
-    state.level = Math.max(0, state.level - 1);
-    // next review = 10 minutes later (same-day re-review)
-    state.nextReview = now + UNKNOWN_REVIEW_DELAY_MS;
-    if (prev.status === 'new') {
-      state.status = 'learning';
-      state.firstLearnedAt = now;
-    }
-  } else if (rating === 'fuzzy') {
-    state.correctCount += 1;
-    // level stays the same for fuzzy
-    state.nextReview = now + 1 * 24 * 60 * 60 * 1000; // tomorrow
-    if (prev.status === 'new') {
-      state.status = 'learning';
-      state.firstLearnedAt = now;
-      state.level = 1;
-    }
-  } else {
-    // known
-    state.correctCount += 1;
-    if (prev.status === 'new') {
-      state.status = 'learning';
-      state.firstLearnedAt = now;
-      state.level = 2;
-    } else {
-      state.level = Math.min(MAX_LEVEL, state.level + 1);
-    }
-    const intervalDays = LEVEL_INTERVALS[state.level] ?? 30;
-    state.nextReview = now + intervalDays * 24 * 60 * 60 * 1000;
-    if (state.level >= MAX_LEVEL) {
-      state.status = 'mastered';
-    }
+function pendingIndex(queue: DailyQueue, states: Map<string, WordState>, mode: StudyMode): number {
+  if (mode === 'all') return queue.currentIndex < queue.queue.length ? queue.currentIndex : -1;
+  return queue.queue.findIndex((id, index) => index >= queue.currentIndex && states.get(id)?.status !== 'new');
+}
+
+export function getCurrentWord(mode: StudyMode = 'all'): Promise<{
+  word: Word; index: number; total: number; mode: StudyMode;
+} | null> {
+  return mutate(async (tx) => {
+    const { queue, states } = await synchronizeQueue(tx, Date.now());
+    const index = pendingIndex(queue, states, mode);
+    if (index < 0) return null;
+    const word = await requestResult<Word | undefined>(tx.objectStore('words').get(queue.queue[index]));
+    if (!word) throw new Error('这个单词暂时无法读取，请重新加载词书');
+    const completed = mode === 'review' ? queue.reviewCompleted : queue.currentIndex;
+    const remaining = mode === 'review'
+      ? queue.queue.slice(queue.currentIndex).filter((id) => states.get(id)?.status !== 'new').length
+      : queue.queue.length - queue.currentIndex;
+    return { word, index: completed, total: completed + remaining, mode };
+  });
+}
+
+export async function rateCurrentWord(
+  rating: Rating,
+  mode: StudyMode = 'all',
+  expectedWordId?: string,
+): Promise<DailyQueue> {
+  if (ratingInFlight) throw new Error('正在保存上一个评价，请稍候');
+  ratingInFlight = true;
+  try {
+    return await mutate(async (tx) => {
+      const now = Date.now();
+      const { queue, states, stat } = await synchronizeQueue(tx, now);
+      const index = pendingIndex(queue, states, mode);
+      if (index < 0) {
+        if (expectedWordId) throw new Error('学习进度已更新，请重新加载当前单词');
+        return queue;
+      }
+      const wordId = queue.queue[index];
+      if (expectedWordId && wordId !== expectedWordId) throw new Error('学习进度已更新，请重新加载当前单词');
+      const prevState = states.get(wordId)!;
+      const wasFirstRating = prevState.status === 'new';
+      const queueType = wasFirstRating ? 'new' : 'review';
+      const nextState = computeNextState(prevState, rating, now);
+      // A dedicated review takes the selected review word out of the pending
+      // suffix and places it at the shared cursor, leaving new words untouched.
+      const ordered = [...queue.queue];
+      const [selected] = ordered.splice(index, 1);
+      ordered.splice(queue.currentIndex, 0, selected);
+      const nextQueue: DailyQueue = {
+        ...queue, queue: ordered,
+        currentIndex: queue.currentIndex + 1,
+        completed: queue.completed + 1,
+        newCompleted: queue.newCompleted + (wasFirstRating ? 1 : 0),
+        reviewCompleted: queue.reviewCompleted + (wasFirstRating ? 0 : 1),
+      };
+      const nextStat: DailyStat = {
+        ...stat,
+        newLearned: stat.newLearned + (wasFirstRating ? 1 : 0),
+        reviewed: stat.reviewed + (wasFirstRating ? 0 : 1),
+        [rating]: stat[rating] + 1,
+      };
+      tx.objectStore('wordStates').put(nextState);
+      tx.objectStore('dailyQueue').put(nextQueue);
+      tx.objectStore('dailyStats').put(nextStat);
+      const ratingRecordId = await requestResult(tx.objectStore('ratingHistory').add({
+        wordId, rating, timestamp: now, date: queue.date, queueType,
+      } satisfies Omit<RatingRecord, 'id'>)) as number;
+      tx.objectStore('undoStack').add({
+        wordId, prevWordState: prevState, prevQueue: queue, prevDailyStat: stat,
+        prevQueueIndex: queue.currentIndex, prevCompleted: queue.completed,
+        prevNewCompleted: queue.newCompleted, prevReviewCompleted: queue.reviewCompleted,
+        rating, timestamp: now, wasFirstRating, date: queue.date, ratingRecordId,
+      } satisfies Omit<UndoEntry, 'id'>);
+      return nextQueue;
+    });
+  } finally {
+    ratingInFlight = false;
   }
+}
 
+function computeNextState(prev: WordState, rating: Rating, now: number): WordState {
+  const state: WordState = { ...prev, lastReviewed: now };
+  if (prev.status === 'new') state.firstLearnedAt = now;
+  if (rating === 'unknown') {
+    state.status = 'learning';
+    state.wrongCount++;
+    state.level = Math.max(0, state.level - 1);
+    // It returns when actually due, rather than being shown immediately again.
+    state.nextReview = now + UNKNOWN_REVIEW_DELAY_MS;
+  } else if (rating === 'fuzzy') {
+    state.status = 'learning';
+    state.correctCount++;
+    state.level = prev.status === 'new' ? 1 : state.level;
+    state.nextReview = now + DAY_MS;
+  } else {
+    state.correctCount++;
+    state.level = prev.status === 'new' ? 2 : Math.min(MAX_LEVEL, state.level + 1);
+    state.status = state.level >= MAX_LEVEL ? 'mastered' : 'learning';
+    state.nextReview = now + (LEVEL_INTERVALS[state.level] ?? 30) * DAY_MS;
+  }
   return state;
 }
 
-/**
- * Undo the last rating.
- * Returns the updated queue, or null if nothing to undo.
- */
-export async function undoLastRating(): Promise<DailyQueue | null> {
-  const entry = await popUndoEntry();
-  if (!entry) return null;
-
-  const date = getDateKey();
-  const queue = await getDailyQueue(date);
-  if (!queue) return null;
-
-  // Restore word state
-  await putWordState(entry.prevWordState);
-
-  // Restore queue counts & index
-  const newQueue: DailyQueue = {
-    ...queue,
-    currentIndex: entry.prevQueueIndex,
-    completed: entry.prevCompleted,
-    newCompleted: entry.prevNewCompleted,
-    reviewCompleted: entry.prevReviewCompleted,
-    // Remove any items added after the undo point (unknown re-adds)
-    queue: queue.queue.slice(0, Math.max(queue.queue.length - 1, entry.prevQueueIndex + 1)),
-  };
-
-  // If the last item in queue was the unknown re-add, remove it
-  // (simplification: we only remove the last added if it matches the undone word and was unknown)
-  if (entry.rating === 'unknown') {
-    const lastIdx = newQueue.queue.length - 1;
-    if (newQueue.queue[lastIdx] === entry.wordId && lastIdx >= entry.prevQueueIndex + 1) {
-      newQueue.queue = newQueue.queue.slice(0, lastIdx);
+export function undoLastRating(): Promise<DailyQueue | null> {
+  return mutate(async (tx) => {
+    const date = getDateKey();
+    const undoStore = tx.objectStore('undoStack');
+    const cursor = await requestResult(undoStore.openCursor(null, 'prev'));
+    if (!cursor) return null;
+    const entry = cursor.value as UndoEntry;
+    const entryDate = entry.date ?? getDateKey(new Date(entry.timestamp));
+    if (entryDate !== date) {
+      undoStore.clear();
+      return null;
     }
-  }
+    const saved = await requestResult<DailyQueue | undefined>(tx.objectStore('dailyQueue').get(date));
+    if (!saved) return null;
 
-  await putDailyQueue(newQueue);
-
-  // Update daily stats (subtract)
-  const stat = await getDailyStat(date);
-  if (stat) {
-    const newStat: DailyStat = {
-      ...stat,
-      newLearned: entry.wasFirstRating ? Math.max(0, stat.newLearned - 1) : stat.newLearned,
-      reviewed: !entry.wasFirstRating ? Math.max(0, stat.reviewed - 1) : stat.reviewed,
-      known: entry.rating === 'known' ? Math.max(0, stat.known - 1) : stat.known,
-      fuzzy: entry.rating === 'fuzzy' ? Math.max(0, stat.fuzzy - 1) : stat.fuzzy,
-      unknown: entry.rating === 'unknown' ? Math.max(0, stat.unknown - 1) : stat.unknown,
+    // Old entries did not save full snapshots. Only the unknown rating could
+    // append a word; known/fuzzy must never truncate an unrelated tail word.
+    let legacyWords = [...saved.queue];
+    if (entry.rating === 'unknown' && legacyWords.length > entry.prevQueueIndex + 1 && legacyWords.at(-1) === entry.wordId) {
+      legacyWords = legacyWords.slice(0, -1);
+    }
+    const restored: DailyQueue = entry.prevQueue ?? {
+      ...saved, queue: legacyWords, currentIndex: entry.prevQueueIndex,
+      completed: entry.prevCompleted, newCompleted: entry.prevNewCompleted,
+      reviewCompleted: entry.prevReviewCompleted,
     };
-    await putDailyStat(newStat);
-  }
-
-  return newQueue;
+    tx.objectStore('wordStates').put(entry.prevWordState);
+    tx.objectStore('dailyQueue').put(restored);
+    const stat = await requestResult<DailyStat | undefined>(tx.objectStore('dailyStats').get(date));
+    if (entry.prevDailyStat) {
+      tx.objectStore('dailyStats').put(entry.prevDailyStat);
+    } else if (stat) {
+      tx.objectStore('dailyStats').put({
+        ...stat,
+        newLearned: Math.max(0, stat.newLearned - (entry.wasFirstRating ? 1 : 0)),
+        reviewed: Math.max(0, stat.reviewed - (entry.wasFirstRating ? 0 : 1)),
+        [entry.rating]: Math.max(0, stat[entry.rating] - 1),
+      });
+    }
+    const historyStore = tx.objectStore('ratingHistory');
+    if (entry.ratingRecordId !== undefined) {
+      historyStore.delete(entry.ratingRecordId);
+    } else {
+      const history = await requestResult<RatingRecord[]>(historyStore.index('wordId').getAll(entry.wordId));
+      const match = history.reverse().find((record) => record.date === date && record.rating === entry.rating);
+      if (match?.id !== undefined) historyStore.delete(match.id);
+    }
+    undoStore.delete(cursor.primaryKey);
+    return restored;
+  });
 }
 
-/**
- * Get home page stats: today progress, streak, weekly data.
- */
-export async function getHomeStats(): Promise<{
-  today: { newCompleted: number; dailyGoal: number; reviewed: number; total: number };
+export interface HomeStats {
+  today: {
+    newCompleted: number; dailyGoal: number; reviewed: number; total: number;
+    remaining: number; reviewDue: number;
+  };
   streak: number;
   weekly: DailyStat[];
-}> {
-  const date = getDateKey();
-  const prefs = getPrefs();
-  const dailyGoal = prefs.dailyGoal ?? 20;
+  totalLearned: number;
+  mastered: number;
+  totalWords: number;
+  studyDays: number;
+}
 
-  let queue: DailyQueue | undefined;
-  try {
-    queue = await getDailyQueue(date);
-  } catch {
-    queue = undefined;
-  }
-
-  const todayStat = (await getDailyStat(date)) ?? {
-    date,
-    newLearned: 0,
-    reviewed: 0,
-    known: 0,
-    fuzzy: 0,
-    unknown: 0,
-    streakContinued: false,
-  };
-
-  // Calculate streak: count consecutive days (going backward from today) with newLearned > 0
-  let streak = 0;
-  const d = new Date();
-  for (let i = 0; i < 365; i++) {
-    const key = getDateKey(d);
-    const s = await getDailyStat(key);
-    if (s && (s.newLearned > 0 || s.reviewed > 0)) {
+export function getHomeStats(): Promise<HomeStats> {
+  return mutate(async (tx) => {
+    const now = Date.now();
+    const { queue, states, totalWords } = await synchronizeQueue(tx, now);
+    const allStats = await requestResult<DailyStat[]>(tx.objectStore('dailyStats').getAll());
+    const byDate = new Map(allStats.map((stat) => [stat.date, stat]));
+    let streak = 0;
+    const day = new Date(now);
+    // An unfinished today does not erase yesterday's continuing streak.
+    if (!hasActivity(byDate.get(getDateKey(day)))) day.setDate(day.getDate() - 1);
+    while (hasActivity(byDate.get(getDateKey(day)))) {
       streak++;
-      d.setDate(d.getDate() - 1);
-    } else {
-      break;
+      day.setDate(day.getDate() - 1);
     }
-  }
-
-  // Weekly stats (last 7 days)
-  const weekly: DailyStat[] = [];
-  const dw = new Date();
-  for (let i = 6; i >= 0; i--) {
-    const d2 = new Date();
-    d2.setDate(d2.getDate() - i);
-    const key = getDateKey(d2);
-    const s = await getDailyStat(key);
-    weekly.push(s ?? { date: key, newLearned: 0, reviewed: 0, known: 0, fuzzy: 0, unknown: 0, streakContinued: false });
-  }
-
-  return {
-    today: {
-      newCompleted: queue?.newCompleted ?? todayStat.newLearned ?? 0,
-      dailyGoal,
-      reviewed: queue?.reviewCompleted ?? todayStat.reviewed ?? 0,
-      total: queue?.queue.length ?? 0,
-    },
-    streak,
-    weekly,
-  };
+    const weekly: DailyStat[] = [];
+    for (let i = 6; i >= 0; i--) {
+      const day = new Date(now);
+      day.setDate(day.getDate() - i);
+      const date = getDateKey(day);
+      weekly.push(byDate.get(date) ?? emptyStat(date));
+    }
+    const remaining = queue.queue.slice(queue.currentIndex);
+    const allStates = [...states.values()];
+    return {
+      today: {
+        newCompleted: queue.newCompleted, dailyGoal: getGoal(),
+        reviewed: queue.reviewCompleted, total: queue.queue.length,
+        remaining: remaining.length,
+        reviewDue: remaining.filter((id) => states.get(id)?.status !== 'new').length,
+      },
+      streak, weekly, totalWords,
+      totalLearned: allStates.filter((state) => state.status !== 'new').length,
+      mastered: allStates.filter((state) => state.status === 'mastered').length,
+      studyDays: allStats.filter(hasActivity).length,
+    };
+  });
 }

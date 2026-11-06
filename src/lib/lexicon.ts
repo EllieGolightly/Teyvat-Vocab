@@ -1,4 +1,4 @@
-import { logger } from '@lark-apaas/client-toolkit-lite';
+import { logger } from './platform';
 import { resolveAppUrl } from './assets';
 import {
   openDB,
@@ -45,7 +45,10 @@ export async function loadLexicon(): Promise<void> {
     logger.info(`Loading ${jsonData.words.length} words into IndexedDB...`);
     await bulkPutWords(jsonData.words);
     logger.info('Lexicon loaded successfully');
-  })();
+  })().catch((error: unknown) => {
+    loadPromise = null;
+    throw error;
+  });
 
   return loadPromise;
 }

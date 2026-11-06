@@ -1,21 +1,23 @@
-import { createContext, useContext, useState, useEffect, useCallback, useMemo } from 'react';
-import { Outlet, useLocation, useNavigate } from 'react-router-dom';
-import { loadLexicon } from '@/lib/lexicon';
-import { getHomeStats, getOrCreateDailyQueue } from '@/lib/study-engine';
-import type { DailyStat } from '@/lib/db';
-import { AlertTriangle, RefreshCcw } from 'lucide-react';
-import { Button } from '@/components/ui/button';
-import { Toaster } from '@/components/ui/sonner';
-import { logger } from '@lark-apaas/client-toolkit-lite';
+import {
+  createContext,
+  useContext,
+  useState,
+  useEffect,
+  useCallback,
+  useMemo,
+} from "react";
+import { Outlet, useLocation } from "react-router-dom";
+import { loadLexicon } from "@/lib/lexicon";
+import { getHomeStats, getOrCreateDailyQueue } from "@/lib/study-engine";
+import { AlertTriangle, RefreshCcw } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Toaster } from "@/components/ui/sonner";
+import { logger } from "@/lib/platform";
 
-type AppState = 'loading' | 'error' | 'ready';
+type AppState = "loading" | "error" | "ready";
 
 interface AppDataContextValue {
-  stats: {
-    today: { newCompleted: number; dailyGoal: number; reviewed: number; total: number };
-    streak: number;
-    weekly: DailyStat[];
-  } | null;
+  stats: Awaited<ReturnType<typeof getHomeStats>> | null;
   refreshStats: () => Promise<void>;
   prefersReducedMotion: boolean;
 }
@@ -24,42 +26,33 @@ const AppDataContext = createContext<AppDataContextValue | null>(null);
 
 export function useAppData() {
   const ctx = useContext(AppDataContext);
-  if (!ctx) throw new Error('useAppData must be used within DataProvider');
+  if (!ctx) throw new Error("useAppData must be used within DataProvider");
   return ctx;
 }
 
 export default function DataProvider() {
-  const [state, setState] = useState<AppState>('loading');
-  const [errorMsg, setErrorMsg] = useState('');
-  const [stats, setStats] = useState<AppDataContextValue['stats']>(null);
+  const [state, setState] = useState<AppState>("loading");
+  const [errorMsg, setErrorMsg] = useState("");
+  const [stats, setStats] = useState<AppDataContextValue["stats"]>(null);
   const [prefersReduced, setPrefersReduced] = useState(false);
   const location = useLocation();
-  const navigate = useNavigate();
 
   const refreshStats = useCallback(async () => {
-    try {
-      const hs = await getHomeStats();
-      setStats(hs);
-    } catch (err) {
-      logger.warn('Stats refresh failed:', String(err));
-    }
+    const hs = await getHomeStats();
+    setStats(hs);
   }, []);
 
   const init = useCallback(async () => {
-    setState('loading');
-    setErrorMsg('');
+    setState("loading");
+    setErrorMsg("");
     try {
       await loadLexicon();
-      try {
-        await getOrCreateDailyQueue();
-      } catch (qErr) {
-        logger.warn('Queue init issue:', String(qErr));
-      }
+      await getOrCreateDailyQueue();
       await refreshStats();
-      setState('ready');
+      setState("ready");
     } catch (err: any) {
-      setErrorMsg(err?.message || '未知错误');
-      setState('error');
+      setErrorMsg(err?.message || "未知错误");
+      setState("error");
     }
   }, [refreshStats]);
 
@@ -68,18 +61,31 @@ export default function DataProvider() {
   }, [init]);
 
   useEffect(() => {
-    const mq = window.matchMedia('(prefers-reduced-motion: reduce)');
+    const mq = window.matchMedia("(prefers-reduced-motion: reduce)");
     setPrefersReduced(mq.matches);
     const handler = (e: MediaQueryListEvent) => setPrefersReduced(e.matches);
-    mq.addEventListener?.('change', handler);
-    return () => mq.removeEventListener?.('change', handler);
+    mq.addEventListener?.("change", handler);
+    return () => mq.removeEventListener?.("change", handler);
   }, []);
 
   // Refresh stats when returning to home
   useEffect(() => {
-    if (state === 'ready' && location.pathname === '/') {
-      refreshStats();
-    }
+    if (state !== "ready") return;
+    const refresh = () => {
+      void refreshStats().catch((err) =>
+        logger.warn("Stats refresh failed:", String(err)),
+      );
+    };
+    refresh();
+    const onVisible = () => {
+      if (document.visibilityState === "visible") refresh();
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    const timer = window.setInterval(onVisible, 60_000);
+    return () => {
+      window.clearInterval(timer);
+      document.removeEventListener("visibilitychange", onVisible);
+    };
   }, [location.pathname, state, refreshStats]);
 
   const contextValue = useMemo<AppDataContextValue>(
@@ -88,10 +94,10 @@ export default function DataProvider() {
       refreshStats,
       prefersReducedMotion: prefersReduced,
     }),
-    [stats, refreshStats, prefersReduced]
+    [stats, refreshStats, prefersReduced],
   );
 
-  if (state === 'loading') {
+  if (state === "loading") {
     return (
       <div className="min-h-screen bg-gradient-to-b from-sky-100 to-background flex flex-col items-center justify-center gap-4">
         <div className="w-10 h-10 border-2 border-primary border-t-transparent rounded-full animate-spin" />
@@ -100,7 +106,7 @@ export default function DataProvider() {
     );
   }
 
-  if (state === 'error') {
+  if (state === "error") {
     return (
       <div className="min-h-screen bg-gradient-to-b from-sky-100 to-background flex flex-col items-center justify-center gap-4 p-8">
         <div className="w-16 h-16 rounded-full bg-destructive/10 flex items-center justify-center">
@@ -116,18 +122,10 @@ export default function DataProvider() {
     );
   }
 
-  // We need to pass navigate to child pages via context too, but they can use useNavigate.
-  // Instead, provide a helper for "start study" action.
   return (
     <AppDataContext.Provider value={contextValue}>
       <Outlet />
       <Toaster position="top-center" richColors closeButton />
     </AppDataContext.Provider>
   );
-}
-
-// Convenience hook for pages to get start study action
-export function useStartStudy() {
-  const navigate = useNavigate();
-  return useCallback(() => navigate('/study'), [navigate]);
 }
