@@ -3,6 +3,7 @@
 @import "./tailwind-theme.css";
 @import "./typography.css";
 @import "./teyvat.css";
+@import "./region-themes.css";
 
 html,
 body,
@@ -14,7 +15,7 @@ body,
 /* iOS may paint native status-bar insets from the document's background. */
 html,
 body {
-  background-color: #91bce8;
+  background-color: var(--theme-sky, #91bce8);
 }
 
 #root {

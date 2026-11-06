@@ -1,7 +1,7 @@
 {
   "name": "Teyvat Vocab",
   "short_name": "Teyvat Vocab",
-  "description": "蒙德主题 CET6 背单词应用，2220 词 + 原神例句，离线可用",
+  "description": "提瓦特主题 CET6 背单词应用，八套地区风景，2220 词与原神例句，离线可用",
   "start_url": "./",
   "scope": "./",
   "display": "standalone",

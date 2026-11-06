@@ -11,9 +11,11 @@ import {
 import AppShell, { PageHeading, Star } from "@/components/AppShell";
 import SettingsDialog from "@/components/SettingsDialog";
 import { useAppData } from "@/components/DataProvider";
-import { ASSETS } from "@/lib/assets";
+import { resolveAppUrl } from "@/lib/assets";
+import { useTheme } from "@/components/ThemeProvider";
 
 export default function ProgressPage() {
+  const { theme } = useTheme();
   const { stats } = useAppData();
   const [settings, setSettings] = useState(false);
   const { hash } = useLocation();
@@ -71,7 +73,7 @@ export default function ProgressPage() {
           </button>
         </PageHeading>
         <section className="profile-card parchment">
-          <img src={ASSETS.paimonTraveler} alt="旅行伙伴" />
+          <img src={resolveAppUrl(theme.assets.portrait)} alt={theme.character} />
           <div>
             <span className="eyebrow">TRAVELER'S JOURNAL</span>
             <h2>旅行者的学习手记</h2>

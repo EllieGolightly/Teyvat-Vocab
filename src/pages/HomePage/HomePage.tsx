@@ -3,24 +3,25 @@ import { Link } from "react-router-dom";
 import {
   BookOpen,
   CalendarDays,
-  ChartNoAxesCombined,
   ChevronRight,
   Heart,
   Leaf,
   Settings,
   Sparkles,
-  Trophy,
 } from "lucide-react";
 import AppShell, { Star } from "@/components/AppShell";
 import SettingsDialog from "@/components/SettingsDialog";
 import { ASSETS, resolveAppUrl } from "@/lib/assets";
 import { useAppData } from "@/components/DataProvider";
-import { useDailyVentiQuote } from "@/hooks/use-daily-venti-quote";
+import { useDailyRegionQuote } from "@/hooks/use-daily-region-quote";
+import { useTheme } from "@/components/ThemeProvider";
+import "@/home-layout.css";
 
 export default function HomePage() {
+  const { theme } = useTheme();
   const { stats } = useAppData();
   const [settings, setSettings] = useState(false);
-  const quote = useDailyVentiQuote();
+  const quote = useDailyRegionQuote(theme.id);
   if (!stats) return null;
   const { today } = stats;
   const percent = Math.min(100, (today.newCompleted / today.dailyGoal) * 100);
@@ -59,8 +60,8 @@ export default function HomePage() {
           </span>
           <img
             className="hero-companions"
-            src={resolveAppUrl("assets/companions-hero.png")}
-            alt="派蒙和旅行者趴在石墙上陪你学习"
+            src={resolveAppUrl(theme.assets.hero)}
+            alt={`派蒙和旅行者${theme.traveler}在${theme.name}陪你学习`}
             fetchPriority="high"
           />
         </section>
@@ -124,21 +125,6 @@ export default function HomePage() {
             <ChevronRight size={22} />
           </Link>
         </section>
-        <nav className="quick-links" aria-label="学习工具">
-          {[
-            { to: "/library", label: "词书选择", Icon: BookOpen },
-            { to: "/progress", label: "学习统计", Icon: ChartNoAxesCombined },
-            { to: "/library?filter=favorites", label: "我的收藏", Icon: Heart },
-            { to: "/progress#achievements", label: "旅行成就", Icon: Trophy },
-          ].map(({ to, label, Icon }) => (
-            <Link to={to} key={label}>
-              <span>
-                <Icon size={29} strokeWidth={1.6} />
-              </span>
-              <strong>{label}</strong>
-            </Link>
-          ))}
-        </nav>
         <section className="plan-card parchment">
           <div className="section-title">
             <h2>
@@ -152,7 +138,7 @@ export default function HomePage() {
           <Link to="/library" className="book-plan">
             <img src={ASSETS.bookIllustration} alt="星纹词书" />
             <div>
-              <span className="book-kicker">CET-6 · 蒙德篇</span>
+              <span className="book-kicker">CET-6 · 核心词汇</span>
               <h3>大学英语六级 · 核心词汇</h3>
               <div className="plan-progress">
                 <div>
@@ -162,7 +148,7 @@ export default function HomePage() {
                   {today.newCompleted} / {today.dailyGoal}
                 </span>
               </div>
-              <p>和派蒙一起，把新词变成老朋友。</p>
+              <p>{theme.companionCaption}</p>
             </div>
           </Link>
           <Link className="review-strip" to="/review">
@@ -178,12 +164,12 @@ export default function HomePage() {
           </Link>
         </section>
         <aside className="venti-banner">
-          <img src={ASSETS.ventiSticker} alt="温迪" />
+          <img src={resolveAppUrl(theme.assets.portrait)} alt={theme.character} />
           <div>
             <blockquote cite={quote?.sourceUrl} title={quote?.source}>
               {quote ? `“ ${quote.text} ”` : '\u00a0'}
             </blockquote>
-            <span>—— 温迪</span>
+            <span>—— {theme.character}</span>
           </div>
           <Star className="quote-star" />
         </aside>

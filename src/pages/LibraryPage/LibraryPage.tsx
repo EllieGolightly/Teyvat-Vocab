@@ -67,7 +67,7 @@ export default function LibraryPage() {
         <section className="library-book parchment">
           <img src={ASSETS.bookIllustration} alt="CET-6 词书" />
           <div>
-            <span className="eyebrow">MONDSTADT COLLECTION</span>
+            <span className="eyebrow">TEYVAT COLLECTION</span>
             <h2>大学英语六级</h2>
             <p>{words.length.toLocaleString()} 个核心词汇 · 提瓦特主题例句</p>
             <span className="current-book">

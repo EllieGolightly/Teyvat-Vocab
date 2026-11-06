@@ -15,7 +15,8 @@ import {
   BookOpen,
 } from "lucide-react";
 import { toast } from "sonner";
-import { ASSETS } from "@/lib/assets";
+import { resolveAppUrl } from "@/lib/assets";
+import { useTheme } from "@/components/ThemeProvider";
 import {
   getCurrentWord,
   rateCurrentWord,
@@ -30,6 +31,7 @@ import { Star } from "@/components/AppShell";
 
 type Current = { word: Word; index: number; total: number };
 export default function StudyPage() {
+  const { theme } = useTheme();
   const [params] = useSearchParams();
   const mode: StudyMode = params.get("mode") === "review" ? "review" : "all";
   const { refreshStats } = useAppData();
@@ -142,7 +144,7 @@ export default function StudyPage() {
   return (
     <div
       className="study-shell"
-      style={{ "--scene": `url(${ASSETS.mondstadtBg})` } as React.CSSProperties}
+      style={{ "--scene": `url(${resolveAppUrl(theme.assets.background)})` } as React.CSSProperties}
     >
       <header className="study-header">
         <Link
@@ -183,7 +185,7 @@ export default function StudyPage() {
       )}
       {complete && !error ? (
         <main className="completion">
-          <img src={ASSETS.paimonTraveler} alt="派蒙和旅行者" />
+          <img src={resolveAppUrl(theme.assets.hero)} alt={`派蒙和旅行者${theme.traveler}`} />
           <span className="eyebrow">A LITTLE FURTHER, TOGETHER</span>
           <h1>{mode === "review" ? "这一轮复习完成了" : "本轮学习完成了！"}</h1>
           <p>把星光收进口袋，明天继续旅程。</p>
@@ -232,7 +234,7 @@ export default function StudyPage() {
               <article className="word-card parchment" key={word!.id}>
                 <div className="word-topline">
                   <span className="word-label">
-                    <BookOpen size={13} /> CET-6 · 蒙德篇
+                    <BookOpen size={13} /> CET-6 · 核心词汇
                   </span>
                   <button
                     className={`icon-button favorite-button ${favorite ? "favorited" : ""}`}

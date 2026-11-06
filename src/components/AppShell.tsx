@@ -1,7 +1,8 @@
 import { useEffect, type ReactNode } from "react";
 import { NavLink, useLocation } from "react-router-dom";
 import { BookOpen, Compass, House, UserRound } from "lucide-react";
-import { ASSETS } from "@/lib/assets";
+import { resolveAppUrl } from "@/lib/assets";
+import { useTheme } from "@/components/ThemeProvider";
 
 export function Star({ className = "" }: { className?: string }) {
   return (
@@ -33,6 +34,7 @@ export default function AppShell({
   children: ReactNode;
   className?: string;
 }) {
+  const { theme } = useTheme();
   const { pathname } = useLocation();
   useEffect(() => {
     window.scrollTo(0, 0);
@@ -40,7 +42,7 @@ export default function AppShell({
   return (
     <div
       className={`app-shell ${className}`}
-      style={{ "--scene": `url(${ASSETS.mondstadtBg})` } as React.CSSProperties}
+      style={{ "--scene": `url(${resolveAppUrl(theme.assets.background)})` } as React.CSSProperties}
     >
       <a className="skip-link" href="#main-content">
         跳到内容

@@ -1,6 +1,7 @@
 // Preferences stored in localStorage (scoped by appId)
 import { scopedStorage } from './platform';
 import { logger } from './platform';
+import type { ThemeId } from './themes';
 
 const PREFS_KEY = 'teyvat_vocab_prefs';
 
@@ -85,6 +86,7 @@ export interface StickerPosition {
 
 export interface AppPrefs {
   dailyGoal: number;
+  themeId: ThemeId;
   favoriteWordIds?: string[];
   themeColor: string; // primary color override (optional)
   wallpaper: string; // url or 'default'
@@ -95,6 +97,7 @@ export interface AppPrefs {
 
 const DEFAULT_PREFS: AppPrefs = {
   dailyGoal: 20,
+  themeId: 'mondstadt',
   themeColor: '',
   wallpaper: 'default',
   gridCols: 4,

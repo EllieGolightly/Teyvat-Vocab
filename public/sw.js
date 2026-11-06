@@ -6,7 +6,7 @@
  *  - 仅缓存 GET 请求，导航请求走网络优先 + 离线回退
  */
 
-const APP_VERSION = 'v10';
+const APP_VERSION = 'v11';
 const SHELL_CACHE = `teyvat-shell-${APP_VERSION}`;
 const LEXICON_CACHE = `teyvat-lexicon-v1`;
 const ASSET_CACHE = `teyvat-assets-v1`;
@@ -36,6 +36,13 @@ const PRECACHE_ASSETS = [
   './assets/companions-hero.png',
   './assets/book-illustration.webp',
   './assets/venti-sticker.webp',
+  ...[
+    'liyue-bg', 'inazuma-bg', 'sumeru-bg', 'fontaine-bg',
+    'natlan-bg', 'snezhnaya-bg', 'nodkrai-bg',
+    'zhongli', 'raiden', 'nahida', 'furina', 'mavuika', 'tsaritsa', 'columbina',
+    'lumine-lantern', 'lumine-sakura', 'aether-reading', 'lumine-tea',
+    'aether-adventure', 'lumine-snow', 'aether-moon',
+  ].map((name) => `./assets/themes/${name}.webp`),
 ];
 
 const PRECACHE_LEXICON = [
