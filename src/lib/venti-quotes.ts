@@ -1,16 +1,71 @@
 import { getDateKey } from './db';
 import { scopedStorage } from './platform';
 
-const SOURCE_URL = 'https://wiki.biligame.com/ys/温迪语音';
-
-// Short, unmodified excerpts from the game's Chinese character voice-overs.
-// Cross-checked against BWIKI on 2026-11-06; labels identify the original lines.
+// Short Chinese excerpts, checked against the linked BWIKI transcripts on 2026-11-06.
+// Nine story lines and one official greeting; source labels distinguish the latter
+// and Venti's quotation of a Mondstadt saying. Keep each excerpt's original wording.
 export const VENTI_QUOTES = [
-  { id: 'poem', text: '动身吧，旅行者。', source: '闲聊·诗篇' },
-  { id: 'wind', text: '难得呀，要不要去飞一飞？', source: '刮大风了…' },
-  { id: 'song', text: '我想把你写进新歌里！', source: '关于我们·新歌' },
-  { id: 'sit', text: '来，坐这边。', source: '突破的感受·转' },
-].map((quote) => ({ ...quote, sourceUrl: SOURCE_URL }));
+  {
+    id: 'story-seeds',
+    text: '风带来故事的种子，时间使其发芽。',
+    source: '活动剧情「翠庵酩酊疑闻」·温迪引用蒙德古话',
+    page: '翠庵酩酊疑闻',
+  },
+  {
+    id: 'journey-meaning',
+    text: '当你重新踏上旅途之后，一定要记得旅途本身的意义。',
+    source: '魔神任务「尾声的尾声」节选',
+    page: '尾声的尾声',
+  },
+  {
+    id: 'changing-wind',
+    text: '但，风向是会转变的。终有一天，会吹向更有光亮的方向。',
+    source: '魔神任务「为了青色的身影」节选',
+    page: '为了青色的身影',
+  },
+  {
+    id: 'windblume',
+    text: '一切美好、值得被祝福的事物，都可以是「风之花」。',
+    source: '活动剧情「风与花之梦」节选',
+    page: '风与花之梦',
+  },
+  {
+    id: 'gentle-wind',
+    text: '放轻松，让风带着你前进。',
+    source: '世界任务「时与风的故事」',
+    page: '时与风的故事',
+  },
+  {
+    id: 'storytellers',
+    text: '书写故事的人和吟唱故事的人之间，似乎存在某种默契。',
+    source: '传说任务「来自过去的预言」',
+    page: '来自过去的预言',
+  },
+  {
+    id: 'a-wish',
+    text: '去实现那个早就该实现的愿望。',
+    source: '传说任务「命运的题解」',
+    page: '命运的题解',
+  },
+  {
+    id: 'wind-remembers',
+    text: '去吧，我的朋友。这里发生的诗篇，风会一一记下。',
+    source: '活动剧情「自往昔飘起的酒香」·摘星崖对话',
+    page: '自往昔飘起的酒香',
+  },
+  {
+    id: 'understanding-friends',
+    text: '不过，朋友之间，也许就是要心知肚明才好。',
+    source: '传说任务「若你困于无风之地」',
+    page: '若你困于无风之地',
+  },
+  {
+    id: 'breeze-and-fragrance',
+    text: '无论未来你去往何方，微风与芬芳都会伴你左右。',
+    source: '官方贺图「2026 白色情人节·温迪」节选',
+    page: 'Venti',
+  },
+].map(({ page, ...quote }) => ({ ...quote, sourceUrl: `https://wiki.biligame.com/ys/${page}` }));
 
 export type VentiQuote = (typeof VENTI_QUOTES)[number];
 const STORAGE_KEY = 'teyvat_daily_venti_quote';

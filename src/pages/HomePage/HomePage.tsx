@@ -180,7 +180,7 @@ export default function HomePage() {
         <aside className="venti-banner">
           <img src={ASSETS.ventiSticker} alt="温迪" />
           <div>
-            <blockquote cite={quote?.sourceUrl} title={quote ? `角色语音「${quote.source}」节选` : undefined}>
+            <blockquote cite={quote?.sourceUrl} title={quote?.source}>
               {quote ? `“ ${quote.text} ”` : '\u00a0'}
             </blockquote>
             <span>—— 温迪</span>
