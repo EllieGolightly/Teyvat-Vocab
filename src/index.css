@@ -7,9 +7,18 @@
 html,
 body,
 #root {
-  min-height: 100%;
+  min-height: 100vh;
   margin: 0;
-  background: #e7eaf2;
+}
+
+/* iOS may paint native status-bar insets from the document's background. */
+html,
+body {
+  background-color: #91bce8;
+}
+
+#root {
+  background: transparent;
 }
 
 .widget-surface {
